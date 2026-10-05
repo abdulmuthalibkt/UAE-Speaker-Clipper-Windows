@@ -1,1 +1,92 @@
+name: Build Windows App
 
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-windows.txt
+          pip install pyinstaller
+
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          Invoke-WebRequest `
+            -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" `
+            -OutFile ffmpeg.zip
+
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_extract -Force
+
+          $ffmpeg = Get-ChildItem ffmpeg_extract -Recurse -Filter ffmpeg.exe |
+            Select-Object -First 1
+
+          Copy-Item $ffmpeg.FullName bin\ffmpeg.exe
+
+      - name: Download yt-dlp
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" `
+            -OutFile bin\yt-dlp.exe
+
+      - name: Prepare Windows paths
+        shell: pwsh
+        run: |
+          $file = "main.py"
+          $content = Get-Content $file -Raw
+
+          $content = $content.Replace(
+            'FFMPEG_BIN = resource_path("bin/ffmpeg")',
+            'FFMPEG_BIN = resource_path("bin/ffmpeg.exe")'
+          )
+
+          $content = $content.Replace(
+            'YTDLP_BIN = resource_path("bin/yt-dlp")',
+            'YTDLP_BIN = resource_path("bin/yt-dlp.exe")'
+          )
+
+          Set-Content $file $content -Encoding UTF8
+
+      - name: Build Windows application
+        run: |
+          pyinstaller --noconfirm --clean --windowed --name "UAE_Speaker_Clipper" --add-binary "bin\ffmpeg.exe;bin" --add-binary "bin\yt-dlp.exe;bin" main.py
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+
+      - name: Create installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path installer | Out-Null
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Create distribution ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "installer\UAE_Speaker_Clipper_Setup.exe" `
+            -DestinationPath "UAE_Speaker_Clipper_Windows.zip" `
+            -Force
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: UAE-Speaker-Clipper-Windows
+          path: UAE_Speaker_Clipper_Windows.zip
